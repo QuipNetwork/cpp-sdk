@@ -11,7 +11,7 @@ namespace quip {
 
 class CLI {
 public:
-  CLI(const std::string &rpc_url);
+  CLI(const std::string &rpc_url, const std::string &contract_address = "");
   ~CLI();
 
   // Parse and execute commands
@@ -53,6 +53,7 @@ private:
   }
 
   std::string rpc_url_;
+  std::string contract_address_;
   std::unique_ptr<QuipFactory> factory_;
   std::function<std::unique_ptr<QuipWallet>(const std::string &,
                                             const std::string &)>

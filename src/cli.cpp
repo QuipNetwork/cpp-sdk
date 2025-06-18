@@ -31,7 +31,8 @@ static Signature parseSignatureFromHex(const std::string &hex) {
   return sig;
 }
 
-CLI::CLI(const std::string &rpc_url) : rpc_url_(rpc_url) {
+CLI::CLI(const std::string &rpc_url, const std::string &contract_address)
+    : rpc_url_(rpc_url), contract_address_(contract_address) {
   factory_ =
       std::make_unique<QuipFactory>(rpc_url, getContractAddress("QuipFactory"));
 }
@@ -78,7 +79,12 @@ bool CLI::handleDeposit(const std::vector<std::string> &args) {
     Signature pq_sig = parseSignatureFromHex(args[1]);
     PrivateKey private_key = args[2];
 
-    return factory_->depositToWinternitz(pq_pubkey, pq_sig, private_key);
+    bool result = factory_->depositToWinternitz(pq_pubkey, pq_sig, private_key);
+    if (result) {
+      Address wallet_address = factory_->getQuipWalletAddress(pq_pubkey);
+      std::cout << "Wallet Address: " << wallet_address << std::endl;
+    }
+    return result;
   } catch (const std::exception &e) {
     std::cerr << "Error: " << e.what() << std::endl;
     return false;
@@ -208,8 +214,13 @@ void CLI::printUsage() const {
 }
 
 std::string CLI::getContractAddress(const std::string &contract_name) const {
-  // TODO: Implement contract address lookup
-  return "0x0000000000000000000000000000000000000000";
+  if (!contract_address_.empty()) {
+    return contract_address_;
+  }
+  // If no contract address provided, this indicates an error in the current
+  // setup
+  throw std::runtime_error(
+      "No contract address provided. Use --contract-address option.");
 }
 
 std::array<uint8_t, 32> CLI::parseVaultId(const std::string &vault_id) const {
@@ -218,7 +229,19 @@ std::array<uint8_t, 32> CLI::parseVaultId(const std::string &vault_id) const {
 }
 
 Address CLI::parseAddress(const std::string &address) const {
-  // TODO: Implement address parsing
+  // Validate Ethereum address: must be 42 chars, start with 0x, and be hex
+  if (address.size() != 42 || address.substr(0, 2) != "0x") {
+    throw std::runtime_error(
+        "Invalid address format: must be 0x followed by 40 hex characters");
+  }
+  for (size_t i = 2; i < 42; ++i) {
+    char c = address[i];
+    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
+          (c >= 'A' && c <= 'F'))) {
+      throw std::runtime_error(
+          "Invalid address format: contains non-hex character");
+    }
+  }
   return address;
 }
 

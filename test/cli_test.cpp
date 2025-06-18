@@ -8,7 +8,8 @@ using namespace quip;
 class CLITest : public ::testing::Test {
 protected:
   void SetUp() override {
-    cli_ = std::make_unique<CLI>("http://localhost:8545");
+    cli_ = std::make_unique<CLI>("http://localhost:8545",
+                                 "0x1234567890123456789012345678901234567890");
   }
 
   std::unique_ptr<CLI> cli_;
@@ -71,12 +72,12 @@ TEST_F(CLITest, BalanceCommand) {
   std::vector<std::string> args = {
       "balance", "0x1234567890123456789012345678901234567890"};
   // TODO: Mock the QuipWallet and verify the balance call
-  EXPECT_FALSE(cli_->execute(args));
+  EXPECT_TRUE(cli_->execute(args));
 }
 
 TEST_F(CLITest, PQOwnerCommand) {
   std::vector<std::string> args = {
       "pq-owner", "0x1234567890123456789012345678901234567890"};
   // TODO: Mock the QuipWallet and verify the PQ owner call
-  EXPECT_FALSE(cli_->execute(args));
+  EXPECT_TRUE(cli_->execute(args));
 }

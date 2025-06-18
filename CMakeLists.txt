@@ -59,7 +59,7 @@ target_link_libraries(quip-cli
 # Test executable
 enable_testing()
 add_executable(quip-cli-tests
-    tests/cli_test.cpp
+    test/cli_test.cpp
     src/cli.cpp
     src/quip_factory.cpp
     src/quip_wallet.cpp
@@ -69,7 +69,7 @@ target_include_directories(quip-cli-tests
     PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${HASHSIGS_ROOT}/include
-    ${CMAKE_SOURCE_DIR}/tests
+    ${CMAKE_SOURCE_DIR}/test
     ${GTEST_INCLUDE_DIRS}
     ${OPENSSL_INCLUDE_DIR}
     ${CMAKE_BINARY_DIR}/_deps/json-src/include
