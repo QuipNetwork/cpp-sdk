@@ -9,10 +9,13 @@ public:
   QuipFactory(const string &rpc_url, const string &contract_address);
   ~QuipFactory();
 
-  bool depositToWinternitz(const PublicKey &pq_pubkey, const Signature &pq_sig,
-                           const PrivateKey &private_key);
+  // Correct depositToWinternitz signature matching the Solidity contract
+  Address depositToWinternitz(const VaultId &vaultId, const Address &to,
+                              const WinternitzAddress &pqTo,
+                              const PrivateKey &private_key,
+                              const Amount &amount = 0);
 
-  Address getQuipWalletAddress(const PublicKey &pq_pubkey);
+  Address getQuipWalletAddress(const VaultId &vaultId, const Address &to);
   Amount getCreationFee();
   Amount getTransferFee();
   Amount getExecuteFee();

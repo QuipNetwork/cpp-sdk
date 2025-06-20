@@ -33,13 +33,18 @@ This will build both the CLI tool and run the test suite.
 
 The CLI tool supports both local development and custom network configurations.
 
+#### Getting Help
+
+```bash
+# Show comprehensive help and usage information
+./build/quip-cli --help
+```
+
 #### Local Development (Default)
 
 For local development with Hardhat:
 
 ./build.sh
-
-````
 
 ## Running the CLI
 
@@ -47,16 +52,18 @@ Basic usage:
 
 ```bash
 ./build/quip-cli <command> [args]
-````
+```
 
 Commands:
 
-- `deposit <pq_pubkey> <pq_sig> <private_key>`
+- `deposit [entropy]` - Deploy a new Quip wallet using Winternitz signatures
 - `transfer <pq_pubkey> <pq_sig> <to_address> <amount> <private_key>`
 - `execute <pq_pubkey> <pq_sig> <target_address> <opdata> <private_key>`
 - `change-owner <pq_pubkey> <pq_sig> <private_key>`
 - `balance <address>`
 - `pq-owner <address>`
+
+To generate post-quantum keypairs and signatures, please use the [`hashsigs-cpp`](https://github.com/QuipNetwork/hashsigs-cpp) library.
 
 ## End-to-End (E2E) Testing
 
@@ -86,6 +93,9 @@ To run E2E tests against a real blockchain (local devnet, testnet, or mainnet), 
    Use the provided bash script to run the CLI against the deployed contracts:
 
 ```bash
+# Show E2E test script help
+./e2e_test.sh --help
+
 # Run all tests against local Hardhat network
 ./e2e_test.sh
 
@@ -156,6 +166,9 @@ cd build && ./quip-cli-tests
 ### End-to-End Tests
 
 ```bash
+# Show E2E test help
+./e2e_test.sh --help
+
 # Local development
 ./e2e_test.sh
 

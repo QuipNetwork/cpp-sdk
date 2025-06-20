@@ -32,6 +32,7 @@ find_package(OpenSSL REQUIRED)
 set(QUIP_CLI_SOURCES
     src/main.cpp
     src/cli.cpp
+    src/common.cpp
     src/quip_factory.cpp
     src/quip_wallet.cpp
 )
@@ -60,7 +61,10 @@ target_link_libraries(quip-cli
 enable_testing()
 add_executable(quip-cli-tests
     test/cli_test.cpp
+    test/quip_factory_test.cpp
+    test/quip_wallet_test.cpp
     src/cli.cpp
+    src/common.cpp
     src/quip_factory.cpp
     src/quip_wallet.cpp
 )

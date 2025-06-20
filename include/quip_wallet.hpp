@@ -10,22 +10,20 @@ public:
   virtual ~QuipWallet();
 
   // Transfer funds using Winternitz signature
-  virtual bool transferWithWinternitz(const PublicKey &pq_pubkey,
-                                      const Signature &pq_sig,
-                                      const Address &to_address, Amount amount,
-                                      const PrivateKey &private_key);
+  virtual bool
+  transferWithWinternitz(const WinternitzAddress &winternitz_address,
+                         const Signature &pq_sig, const Address &to_address,
+                         Amount amount);
 
   // Execute a contract call using Winternitz signature
-  virtual bool executeWithWinternitz(const PublicKey &pq_pubkey,
-                                     const Signature &pq_sig,
-                                     const Address &target_address,
-                                     const vector<uint8_t> &opdata,
-                                     const PrivateKey &private_key);
+  virtual bool
+  executeWithWinternitz(const WinternitzAddress &winternitz_address,
+                        const Signature &pq_sig, const Address &target_address,
+                        const vector<uint8_t> &opdata);
 
   // Change the PQ owner using Winternitz signature
-  virtual bool changePqOwner(const PublicKey &pq_pubkey,
-                             const Signature &pq_sig,
-                             const PrivateKey &private_key);
+  virtual bool changePqOwner(const WinternitzAddress &winternitz_address,
+                             const Signature &pq_sig);
 
   // Get the current PQ owner
   virtual Address getPqOwner();
