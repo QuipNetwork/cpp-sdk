@@ -26,12 +26,17 @@ public:
 
 private:
   // Command handlers
-  bool handleDeposit(const std::vector<std::string> &args);
+  bool handleGenerateKeypair(const std::vector<std::string> &args);
+  bool handleRecoverKeypair(const std::vector<std::string> &args);
+  bool handleSign(const std::vector<std::string> &args);
+  bool handleGetPqOwner(const std::vector<std::string> &args);
+  bool handleChangePqOwner(const std::vector<std::string> &args);
+  bool handleGetBalance(const std::vector<std::string> &args);
   bool handleTransfer(const std::vector<std::string> &args);
   bool handleExecute(const std::vector<std::string> &args);
-  bool handleChangeOwner(const std::vector<std::string> &args);
-  bool handleGetBalance(const std::vector<std::string> &args);
-  bool handleGetPqOwner(const std::vector<std::string> &args);
+  bool handleDeposit(const std::vector<std::string> &args);
+  bool handleGetVault(const std::vector<std::string> &args);
+  bool handleGetVaults(const std::vector<std::string> &args);
 
   // Helper functions
   void printUsage() const;

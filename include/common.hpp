@@ -60,14 +60,22 @@ inline string toHex(const array<uint8_t, 32> &data) {
   return "0x" + result;
 }
 
-inline vector<uint8_t> fromHex(const string &hex) {
+inline vector<uint8_t> fromHex(const string &hex, size_t expected_length = 0) {
+  string hex_str = hex;
   if (hex.substr(0, 2) == "0x") {
-    return fromHex(hex.substr(2));
+    hex_str = hex.substr(2);
   }
+
+  if (expected_length > 0 && hex_str.length() != expected_length * 2) {
+    throw runtime_error("Invalid hex string length: expected " +
+                        std::to_string(expected_length) + " bytes, got " +
+                        std::to_string(hex_str.length() / 2) + " bytes");
+  }
+
   vector<uint8_t> result;
-  result.reserve(hex.length() / 2);
-  for (size_t i = 0; i < hex.length(); i += 2) {
-    string byteString = hex.substr(i, 2);
+  result.reserve(hex_str.length() / 2);
+  for (size_t i = 0; i < hex_str.length(); i += 2) {
+    string byteString = hex_str.substr(i, 2);
     uint8_t byte =
         static_cast<uint8_t>(strtol(byteString.c_str(), nullptr, 16));
     result.push_back(byte);
@@ -76,11 +84,7 @@ inline vector<uint8_t> fromHex(const string &hex) {
 }
 
 inline array<uint8_t, 32> fromHex32(const string &hex) {
-  vector<uint8_t> bytes = fromHex(hex);
-  if (bytes.size() != 32) {
-    throw runtime_error(
-        "Hex string must be exactly 32 bytes (64 hex characters)");
-  }
+  vector<uint8_t> bytes = fromHex(hex, 32);
   array<uint8_t, 32> result;
   std::copy(bytes.begin(), bytes.end(), result.begin());
   return result;

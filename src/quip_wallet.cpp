@@ -27,9 +27,15 @@ public:
 
   bool transferWithWinternitz(const WinternitzAddress &winternitz_address,
                               const Signature &pq_sig,
-                              const Address &to_address, Amount amount,
-                              const PrivateKey &private_key) {
+                              const Address &to_address, Amount amount) {
     try {
+      // Get private key from environment
+      const char *env_private_key = std::getenv("PRIVATE_KEY");
+      if (!env_private_key) {
+        throw std::runtime_error("PRIVATE_KEY environment variable not set");
+      }
+      PrivateKey private_key = env_private_key;
+
       // Convert C++ types to the format expected by the ABI encoder
       nlohmann::json nextPqOwner = {
           {"publicSeed", toHex(winternitz_address.publicSeed)},
@@ -201,9 +207,15 @@ public:
   bool executeWithWinternitz(const WinternitzAddress &winternitz_address,
                              const Signature &pq_sig,
                              const Address &target_address,
-                             const std::vector<uint8_t> &opdata,
-                             const PrivateKey &private_key) {
+                             const std::vector<uint8_t> &opdata) {
     try {
+      // Get private key from environment
+      const char *env_private_key = std::getenv("PRIVATE_KEY");
+      if (!env_private_key) {
+        throw std::runtime_error("PRIVATE_KEY environment variable not set");
+      }
+      PrivateKey private_key = env_private_key;
+
       // Convert C++ types to the format expected by the ABI encoder
       nlohmann::json nextPqOwner = {
           {"publicSeed", toHex(winternitz_address.publicSeed)},
@@ -375,8 +387,15 @@ public:
   }
 
   bool changePqOwner(const WinternitzAddress &winternitz_address,
-                     const Signature &pq_sig, const PrivateKey &private_key) {
+                     const Signature &pq_sig) {
     try {
+      // Get private key from environment
+      const char *env_private_key = std::getenv("PRIVATE_KEY");
+      if (!env_private_key) {
+        throw std::runtime_error("PRIVATE_KEY environment variable not set");
+      }
+      PrivateKey private_key = env_private_key;
+
       // Convert C++ types to the format expected by the ABI encoder
       nlohmann::json newPqOwner = {
           {"publicSeed", toHex(winternitz_address.publicSeed)},
@@ -560,9 +579,9 @@ public:
 
       // Decode the result: two 32-byte values (publicSeed, publicKeyHash)
       if (result.length() == 2 + 64 + 64) { // 0x + 64 + 64 hex chars
-        std::string publicSeed = "0x" + result.substr(2, 64);
-        std::string publicKeyHash = "0x" + result.substr(66, 64);
-        return publicSeed + publicKeyHash;
+        std::string publicSeed = result.substr(2, 64);
+        std::string publicKeyHash = result.substr(66, 64);
+        return "0x" + publicSeed + publicKeyHash;
       }
       return "0x";
     } catch (const std::exception &e) {
@@ -604,7 +623,9 @@ public:
   // Derive classical public key from private key
   std::string deriveClassicalPublicKey(const PrivateKey &private_key) {
     // Use the same approach as CLI - call ethers.js from ethereum-sdk
-    std::string command = "cd ./ethereum-sdk && node -e \"console.log(new "
+    std::string command = "cd " +
+                          std::string(getenv("PWD") ? getenv("PWD") : ".") +
+                          "/ethereum-sdk && node -e \"console.log(new "
                           "(require('ethers').Wallet)('" +
                           private_key + "').address)\"";
 

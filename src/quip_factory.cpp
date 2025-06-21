@@ -7,6 +7,7 @@
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include <stdexcept>
+#include <string>
 #include <thread>
 
 namespace quip {
@@ -249,7 +250,8 @@ public:
     nlohmann::json params_call = {call_object, "latest"};
     auto response = sendJsonRpc("eth_call", params_call);
     std::string result = response["result"];
-    if (result.length() >= 66) {
+    if (result.length() >= 66) { // 0x + 64 hex chars
+      // Parse uint256 from hex
       return std::stoull(result.substr(2), nullptr, 16);
     }
     return 0;
@@ -264,67 +266,210 @@ public:
     nlohmann::json params_call = {call_object, "latest"};
     auto response = sendJsonRpc("eth_call", params_call);
     std::string result = response["result"];
-    if (result.length() >= 66) {
+    if (result.length() >= 66) { // 0x + 64 hex chars
+      // Parse uint256 from hex
       return std::stoull(result.substr(2), nullptr, 16);
     }
     return 0;
   }
 
+  std::vector<Vault> getVaults(const Address &owner) {
+    std::vector<Vault> vaults;
+    uint32_t index = 0;
+    while (true) {
+      try {
+        VaultId vault_id = getVaultId(owner, index);
+        // The contract returns 0x0...0 if the index is out of bounds.
+        if (std::all_of(vault_id.begin(), vault_id.end(),
+                        [](uint8_t i) { return i == 0; })) {
+          break;
+        }
+
+        Address wallet_address = getQuipWalletAddress(vault_id, owner);
+        if (wallet_address != "0x0000000000000000000000000000000000000000") {
+          Vault v;
+          v.id = vault_id;
+          v.classical_address = wallet_address;
+          vaults.push_back(v);
+        }
+        index++;
+      } catch (const std::exception &e) {
+        // Break the loop on any error, which likely means we're past the end of
+        // the array
+        break;
+      }
+    }
+    return vaults;
+  }
+
 private:
+  VaultId getVaultId(const Address &owner, uint32_t index) {
+    // Encode the function call using the ABI encoding script
+    nlohmann::json params = {owner, index};
+    std::string params_json = params.dump();
+    std::string data = abiEncode("vaultIds", abi_json, params_json);
+
+    // Call the contract - eth_call expects [call_object, block]
+    nlohmann::json call_object = {{"to", contract_address_}, {"data", data}};
+    nlohmann::json params_call = {call_object, "latest"};
+
+    auto response = sendJsonRpc("eth_call", params_call);
+    std::string result = response["result"];
+
+    // The result should be a 32-byte hex string (0x + 64 chars)
+    if (result.rfind("0x", 0) == 0 && result.length() == 66) {
+      std::vector<uint8_t> vec = fromHex(result.substr(2));
+      VaultId arr;
+      std::copy_n(vec.begin(), 32, arr.begin());
+      return arr;
+    }
+
+    // If we get an error or invalid response, throw an exception to stop
+    // iteration
+    throw std::runtime_error("Failed to retrieve vault ID: " + result);
+  }
+
   static size_t WriteCallback(void *contents, size_t size, size_t nmemb,
-                              std::string *userp) {
-    userp->append((char *)contents, size * nmemb);
+                              void *userp) {
+    ((std::string *)userp)->append((char *)contents, size * nmemb);
     return size * nmemb;
   }
 
-  static int getNextRequestId() {
-    static int id = 1;
-    return id++;
-  }
+  static int getNextRequestId() { return request_id_counter_++; }
 
   nlohmann::json sendJsonRpc(const std::string &method,
                              const nlohmann::json &params) {
-    CURL *curl = curl_easy_init();
-    if (!curl) {
-      throw std::runtime_error("Failed to initialize CURL");
+    CURL *curl;
+    CURLcode res;
+    std::string readBuffer;
+
+    curl = curl_easy_init();
+    if (curl) {
+      struct curl_slist *headers = NULL;
+      headers = curl_slist_append(headers, "Content-Type: application/json");
+
+      nlohmann::json request = {{"jsonrpc", "2.0"},
+                                {"method", method},
+                                {"params", params},
+                                {"id", getNextRequestId()}};
+
+      std::string request_str = request.dump();
+
+      curl_easy_setopt(curl, CURLOPT_URL, rpc_url_.c_str());
+      curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+      curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request_str.c_str());
+      curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+      curl_easy_setopt(curl, CURLOPT_WRITEDATA, &readBuffer);
+      res = curl_easy_perform(curl);
+      curl_easy_cleanup(curl);
+      curl_slist_free_all(headers);
+
+      if (res != CURLE_OK) {
+        throw std::runtime_error("curl_easy_perform() failed: " +
+                                 std::string(curl_easy_strerror(res)));
+      }
+
+      auto response_json = nlohmann::json::parse(readBuffer);
+      if (response_json.contains("error")) {
+        throw std::runtime_error("RPC error: " + response_json["error"].dump());
+      }
+      return response_json;
+    }
+    throw std::runtime_error("curl_easy_init() failed");
+  }
+
+  // Helper to call the abiEncode.ts script
+  std::string abiEncode(const std::string &functionName, const std::string &abi,
+                        const std::string &paramsJson) {
+    // Note: The order of arguments must match abiEncode.ts
+    // 1. abi
+    // 2. function name
+    // 3. params
+    std::string command =
+        "cd ./ethereum-sdk && npx ts-node scripts/abiEncode.ts '" + abi +
+        "' '" + functionName + "' '" + paramsJson + "'";
+
+    FILE *pipe = popen(command.c_str(), "r");
+    if (!pipe) {
+      throw std::runtime_error("Failed to execute abiEncode script");
     }
 
-    nlohmann::json request = {{"jsonrpc", "2.0"},
-                              {"id", getNextRequestId()},
-                              {"method", method},
-                              {"params", params}};
-
-    std::string response_string;
-    std::string request_string = request.dump();
-
-    curl_easy_setopt(curl, CURLOPT_URL, rpc_url_.c_str());
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request_string.c_str());
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_string);
-    curl_easy_setopt(
-        curl, CURLOPT_HTTPHEADER,
-        curl_slist_append(nullptr, "Content-Type: application/json"));
-
-    CURLcode res = curl_easy_perform(curl);
-    curl_easy_cleanup(curl);
-
-    if (res != CURLE_OK) {
-      throw std::runtime_error("CURL request failed: " +
-                               std::string(curl_easy_strerror(res)));
+    std::string result;
+    char buffer[128];
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+      result += buffer;
     }
 
-    auto response = nlohmann::json::parse(response_string);
-    if (response.contains("error")) {
-      throw std::runtime_error("JSON-RPC error: " +
-                               response["error"]["message"].get<std::string>());
+    int status = pclose(pipe);
+    if (status != 0) {
+      throw std::runtime_error("abiEncode script failed: " + result);
     }
 
-    return response;
+    // Remove newline from the end
+    if (!result.empty() && result[result.length() - 1] == '\n') {
+      result.erase(result.length() - 1);
+    }
+    return result;
   }
 
   std::string rpc_url_;
   std::string contract_address_;
+  static int request_id_counter_;
 };
+
+int QuipFactory::Impl::request_id_counter_ = 0;
+
+const std::string QuipFactory::Impl::abi_json = R"([
+  {
+    "type": "function",
+    "name": "depositToWinternitz",
+    "inputs": [
+      { "name": "vaultId", "type": "bytes32" },
+      { "name": "to", "type": "address" },
+      { "name": "pqTo", "type": "tuple", "components": [
+        { "name": "publicSeed", "type": "bytes32" },
+        { "name": "publicKeyHash", "type": "bytes32" }
+      ]}
+    ],
+    "outputs": [{ "name": "contractAddr", "type": "address" }]
+  },
+  {
+    "type": "function",
+    "name": "quips",
+    "inputs": [
+      { "name": "owner", "type": "address" },
+      { "name": "vaultId", "type": "bytes32" }
+    ],
+    "outputs": [{ "name": "walletAddress", "type": "address" }]
+  },
+  {
+    "type": "function",
+    "name": "vaultIds",
+    "inputs": [
+        { "name": "owner", "type": "address" },
+        { "name": "index", "type": "uint256" }
+    ],
+    "outputs": [{ "name": "vaultId", "type": "bytes32" }]
+  },
+  {
+    "type": "function",
+    "name": "creationFee",
+    "inputs": [],
+    "outputs": [{ "name": "fee", "type": "uint256" }]
+  },
+  {
+    "type": "function",
+    "name": "transferFee",
+    "inputs": [],
+    "outputs": [{ "name": "fee", "type": "uint256" }]
+  },
+  {
+    "type": "function",
+    "name": "executeFee",
+    "inputs": [],
+    "outputs": [{ "name": "fee", "type": "uint256" }]
+  }
+])";
 
 QuipFactory::QuipFactory(const std::string &rpc_url,
                          const std::string &contract_address)
@@ -346,11 +491,13 @@ Address QuipFactory::getQuipWalletAddress(const VaultId &vaultId,
 }
 
 Amount QuipFactory::getCreationFee() { return impl_->getCreationFee(); }
+
 Amount QuipFactory::getTransferFee() { return impl_->getTransferFee(); }
+
 Amount QuipFactory::getExecuteFee() { return impl_->getExecuteFee(); }
 
-// Define the static member
-const std::string QuipFactory::Impl::abi_json =
-    R"([{"inputs":[{"internalType":"address payable","name":"initialOwner","type":"address"},{"internalType":"address","name":"_wotsLibrary","type":"address"}],"stateMutability":"payable","type":"constructor"},{"anonymous":false,"inputs":[{"indexed":false,"internalType":"uint256","name":"amount","type":"uint256"},{"indexed":false,"internalType":"uint256","name":"when","type":"uint256"},{"indexed":false,"internalType":"bytes32","name":"vaultId","type":"bytes32"},{"indexed":false,"internalType":"address","name":"creator","type":"address"},{"components":[{"internalType":"bytes32","name":"publicSeed","type":"bytes32"},{"internalType":"bytes32","name":"publicKeyHash","type":"bytes32"}],"indexed":false,"internalType":"struct WOTSPlus.WinternitzAddress","name":"pqPubkey","type":"tuple"},{"indexed":false,"internalType":"address","name":"quip","type":"address"}],"name":"QuipCreated","type":"event"},{"stateMutability":"payable","type":"fallback"},{"inputs":[],"name":"admin","outputs":[{"internalType":"address payable","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"creationFee","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"bytes32","name":"vaultId","type":"bytes32"},{"internalType":"address payable","name":"to","type":"address"},{"components":[{"internalType":"bytes32","name":"publicSeed","type":"bytes32"},{"internalType":"bytes32","name":"publicKeyHash","type":"bytes32"}],"internalType":"struct WOTSPlus.WinternitzAddress","name":"pqTo","type":"tuple"}],"name":"depositToWinternitz","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"payable","type":"function"},{"inputs":[],"name":"executeFee","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"owner","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"","type":"address"},{"internalType":"bytes32","name":"","type":"bytes32"}],"name":"quips","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"uint256","name":"newFee","type":"uint256"}],"name":"setCreationFee","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"uint256","name":"newFee","type":"uint256"}],"name":"setExecuteFee","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"uint256","name":"newFee","type":"uint256"}],"name":"setTransferFee","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[],"name":"transferFee","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address","name":"newOwner","type":"address"}],"name":"transferOwnership","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"address","name":"","type":"address"},{"internalType":"uint256","name":"","type":"uint256"}],"name":"vaultIds","outputs":[{"internalType":"bytes32","name":"","type":"bytes32"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"uint256","name":"amount","type":"uint256"}],"name":"withdraw","outputs":[],"stateMutability":"nonpayable","type":"function"},{"inputs":[],"name":"wotsLibrary","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"stateMutability":"payable","type":"receive"}])";
+std::vector<Vault> QuipFactory::getVaults(const Address &owner) {
+  return impl_->getVaults(owner);
+}
 
 } // namespace quip

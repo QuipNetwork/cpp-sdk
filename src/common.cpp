@@ -29,8 +29,9 @@ std::string abiEncode(const std::string &function_name,
   }
 
   std::string command =
-      "cd ./ethereum-sdk/scripts && npx ts-node abiEncode.ts \"" + escaped_abi +
-      "\" \"" + function_name + "\" \"" + escaped_params + "\"";
+      "npx ts-node " + std::string(getenv("PWD") ? getenv("PWD") : ".") +
+      "/ethereum-sdk/scripts/abiEncode.ts \"" + escaped_abi + "\" \"" +
+      function_name + "\" \"" + escaped_params + "\"";
 
   FILE *pipe = popen(command.c_str(), "r");
   if (!pipe) {
@@ -45,8 +46,6 @@ std::string abiEncode(const std::string &function_name,
 
   int status = pclose(pipe);
   if (status != 0) {
-    // Debug output
-    std::cerr << "Debug: Executing command: " << command << std::endl;
     throw std::runtime_error("ABI encoding script failed with status " +
                              std::to_string(status));
   }
@@ -55,9 +54,6 @@ std::string abiEncode(const std::string &function_name,
   if (!result.empty() && result.back() == '\n') {
     result.pop_back();
   }
-
-  // Debug output
-  std::cerr << "Debug: ABI encoding result: " << result << std::endl;
 
   return result;
 }

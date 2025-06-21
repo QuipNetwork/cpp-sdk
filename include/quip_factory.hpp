@@ -1,12 +1,23 @@
 #pragma once
 
 #include "common.hpp"
+#include <memory>
+#include <optional>
+#include <string>
+#include <vector>
 
 namespace quip {
 
+struct Vault {
+  VaultId id;
+  Address classical_address;
+  WinternitzAddress pq_address;
+};
+
 class QuipFactory {
 public:
-  QuipFactory(const string &rpc_url, const string &contract_address);
+  QuipFactory(const std::string &rpc_url,
+              const std::string &contract_address = "");
   ~QuipFactory();
 
   // Correct depositToWinternitz signature matching the Solidity contract
@@ -16,13 +27,17 @@ public:
                               const Amount &amount = 0);
 
   Address getQuipWalletAddress(const VaultId &vaultId, const Address &to);
-  Amount getCreationFee();
-  Amount getTransferFee();
-  Amount getExecuteFee();
+  virtual Amount getCreationFee();
+  virtual Amount getTransferFee();
+  virtual Amount getExecuteFee();
+
+  std::vector<Vault> getVaults(const Address &owner);
+
+  // Get the wallet's balance
 
 private:
   class Impl;
-  unique_ptr<Impl> impl_;
+  std::unique_ptr<Impl> impl_;
 };
 
 } // namespace quip
