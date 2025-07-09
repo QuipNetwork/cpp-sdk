@@ -48,10 +48,6 @@ public:
       }
       nlohmann::json pqSig = {{"elements", elements}};
       
-      // Debug: Check signature length
-      if (elements.size() != 67) {
-        std::cerr << "Warning: Signature length is " << elements.size() << ", expected 67" << std::endl;
-      }
 
       // Create parameters for ABI encoding
       nlohmann::json params = {nextPqOwner, pqSig, to_address,
@@ -110,8 +106,7 @@ public:
         }
       } catch (const std::exception &e) {
         // If gas estimation fails, use the fallback gas limit
-        std::cerr << "Debug: Gas estimation failed, using fallback: "
-                  << e.what() << std::endl;
+        // Gas estimation failed, use fallback
       }
 
       // Convert values to hex strings
@@ -163,11 +158,6 @@ public:
                             escaped_tx_json + "\" \"" + escaped_private_key +
                             "\"";
 
-      // Debug output
-      std::cerr << "Debug: Private key: " << private_key << std::endl;
-      std::cerr << "Debug: Escaped private key: " << escaped_private_key
-                << std::endl;
-      std::cerr << "Debug: Command: " << command << std::endl;
 
       FILE *pipe = popen(command.c_str(), "r");
       if (!pipe) {
@@ -197,8 +187,6 @@ public:
       std::string tx_hash;
 
       if (std::getline(result_stream, tx_hash)) {
-        std::cerr << "Debug: Transfer transaction hash: " << tx_hash
-                  << std::endl;
         return true;
       } else {
         throw std::runtime_error("Failed to parse transaction result: " +
@@ -214,6 +202,16 @@ public:
                              const Signature &pq_sig,
                              const Address &target_address,
                              const std::vector<uint8_t> &opdata) {
+    // Use default execute fee
+    Amount executeFee = getExecuteFee();
+    return executeWithWinternitzValue(winternitz_address, pq_sig, target_address, opdata, executeFee);
+  }
+
+  bool executeWithWinternitzValue(const WinternitzAddress &winternitz_address,
+                                 const Signature &pq_sig,
+                                 const Address &target_address,
+                                 const std::vector<uint8_t> &opdata,
+                                 Amount eth_value) {
     try {
       // Get private key from environment
       const char *env_private_key = std::getenv("PRIVATE_KEY");
@@ -245,8 +243,9 @@ public:
       std::string data =
           abiEncode("executeWithWinternitz", abi_json, params_json);
 
-      // Get the transfer fee
-      Amount transferFee = getTransferFee();
+      // Get the execute fee (use passed value)
+      Amount executeFee = getExecuteFee();
+      Amount totalValue = eth_value; // Use the passed ETH value instead of just the fee
 
       // Get account address from private key
       std::string from_address = deriveClassicalPublicKey(private_key);
@@ -278,11 +277,15 @@ public:
       // Estimate gas
       uint64_t gas_limit = 500000; // Use a reasonable gas limit
       try {
+        std::stringstream value_stream;
+        value_stream << "0x" << std::hex << totalValue;
+        std::string value_for_estimate = value_stream.str();
+        
         nlohmann::json call_object = {
             {"from", from_address},
             {"to", contract_address_},
             {"data", data},
-            {"value", "0x" + std::to_string(transferFee)}};
+            {"value", value_for_estimate}};
         nlohmann::json estimate_params = {call_object, "latest"};
         auto gas_response = sendJsonRpc("eth_estimateGas", estimate_params);
         if (!gas_response["result"].is_null()) {
@@ -293,8 +296,7 @@ public:
         }
       } catch (const std::exception &e) {
         // If gas estimation fails, use the fallback gas limit
-        std::cerr << "Debug: Gas estimation failed, using fallback: "
-                  << e.what() << std::endl;
+        // Gas estimation failed, use fallback
       }
 
       // Convert values to hex strings
@@ -307,7 +309,7 @@ public:
       std::string nonce_hex_str = nonce_ss.str();
 
       std::stringstream value_ss;
-      value_ss << "0x" << std::hex << transferFee;
+      value_ss << "0x" << std::hex << totalValue;
       std::string value_hex = value_ss.str();
 
       // Create transaction
@@ -345,11 +347,6 @@ public:
                             escaped_tx_json + "\" \"" + escaped_private_key +
                             "\"";
 
-      // Debug output
-      std::cerr << "Debug: Private key: " << private_key << std::endl;
-      std::cerr << "Debug: Escaped private key: " << escaped_private_key
-                << std::endl;
-      std::cerr << "Debug: Command: " << command << std::endl;
 
       FILE *pipe = popen(command.c_str(), "r");
       if (!pipe) {
@@ -379,8 +376,6 @@ public:
       std::string tx_hash;
 
       if (std::getline(result_stream, tx_hash)) {
-        std::cerr << "Debug: Execute transaction hash: " << tx_hash
-                  << std::endl;
         return true;
       } else {
         throw std::runtime_error("Failed to parse transaction result: " +
@@ -421,8 +416,8 @@ public:
       std::string params_json = params.dump();
       std::string data = abiEncode("changePqOwner", abi_json, params_json);
 
-      // Get the transfer fee
-      Amount transferFee = getTransferFee();
+      // changePqOwner doesn't require any ETH value
+      // Amount transferFee = getTransferFee();
 
       // Get account address from private key
       std::string from_address = deriveClassicalPublicKey(private_key);
@@ -458,7 +453,7 @@ public:
             {"from", from_address},
             {"to", contract_address_},
             {"data", data},
-            {"value", "0x" + std::to_string(transferFee)}};
+            {"value", "0x0"}};
         nlohmann::json estimate_params = {call_object, "latest"};
         auto gas_response = sendJsonRpc("eth_estimateGas", estimate_params);
         if (!gas_response["result"].is_null()) {
@@ -469,8 +464,7 @@ public:
         }
       } catch (const std::exception &e) {
         // If gas estimation fails, use the fallback gas limit
-        std::cerr << "Debug: Gas estimation failed, using fallback: "
-                  << e.what() << std::endl;
+        // Gas estimation failed, use fallback
       }
 
       // Convert values to hex strings
@@ -482,9 +476,8 @@ public:
       nonce_ss << "0x" << std::hex << nonce;
       std::string nonce_hex_str = nonce_ss.str();
 
-      std::stringstream value_ss;
-      value_ss << "0x" << std::hex << transferFee;
-      std::string value_hex = value_ss.str();
+      // changePqOwner doesn't need any value
+      std::string value_hex = "0x0";
 
       // Create transaction
       nlohmann::json tx = {{"from", from_address},
@@ -521,11 +514,6 @@ public:
                             escaped_tx_json + "\" \"" + escaped_private_key +
                             "\"";
 
-      // Debug output
-      std::cerr << "Debug: Private key: " << private_key << std::endl;
-      std::cerr << "Debug: Escaped private key: " << escaped_private_key
-                << std::endl;
-      std::cerr << "Debug: Command: " << command << std::endl;
 
       FILE *pipe = popen(command.c_str(), "r");
       if (!pipe) {
@@ -547,21 +535,43 @@ public:
 
       // Check if the script failed
       if (result.find("Error:") != std::string::npos) {
+        // Check if it's just a gas estimation failure (which can happen for valid transactions)
+        if (result.find("Error: execution reverted") != std::string::npos) {
+          // This is a revert during gas estimation, which means the transaction would fail
+          // This is expected behavior when the signature is invalid
+          throw std::runtime_error("Transaction reverted: Invalid signature or wallet state");
+        }
         throw std::runtime_error("Transaction failed: " + result);
       }
 
-      // Parse the transaction hash
+      // Parse the transaction result
       std::istringstream result_stream(result);
-      std::string tx_hash;
-
-      if (std::getline(result_stream, tx_hash)) {
-        std::cerr << "Debug: Change PQ owner transaction hash: " << tx_hash
-                  << std::endl;
-        return true;
-      } else {
-        throw std::runtime_error("Failed to parse transaction result: " +
-                                 result);
+      std::string line;
+      
+      // Look for transaction hash or success indicators
+      bool hasTransactionHash = false;
+      bool hasSuccessStatus = false;
+      
+      while (std::getline(result_stream, line)) {
+        if (line.find("Transaction hash:") != std::string::npos) {
+            hasTransactionHash = true;
+        } else if (line.find("Transaction mined with status: 1") != std::string::npos) {
+            hasSuccessStatus = true;
+        } else if (line.find("Transaction mined with status: 0") != std::string::npos) {
+          throw std::runtime_error("Transaction failed with status 0");
+        } else if (line.find("Warning:") != std::string::npos) {
+          std::cerr << line << std::endl;
+          // Continue parsing for more info
+        }
       }
+      
+      // If we have both transaction hash and success status, or just transaction hash, it's successful
+      if (hasTransactionHash || hasSuccessStatus) {
+        return true;
+      }
+      
+      // If we get here, we didn't find expected output
+      throw std::runtime_error("Failed to parse transaction result: " + result);
     } catch (const std::exception &e) {
       std::cerr << "Error in changePqOwner: " << e.what() << std::endl;
       return false;
@@ -616,6 +626,20 @@ public:
   Amount getTransferFee() {
     try {
       // Call the contract to get transfer fee
+      nlohmann::json params = {contract_address_, "0x", "latest"};
+      auto response = sendJsonRpc("eth_call", params);
+      // For now, return a default fee
+      return 1000000000000000; // 0.001 ETH in wei
+    } catch (const std::exception &e) {
+      // Return default fee if call fails
+      return 1000000000000000; // 0.001 ETH in wei
+    }
+  }
+
+  // Get execute fee from contract
+  Amount getExecuteFee() {
+    try {
+      // Call the contract to get execute fee
       nlohmann::json params = {contract_address_, "0x", "latest"};
       auto response = sendJsonRpc("eth_call", params);
       // For now, return a default fee
@@ -727,6 +751,13 @@ bool QuipWallet::executeWithWinternitz(
     const Address &target_address, const std::vector<uint8_t> &opdata) {
   return impl_->executeWithWinternitz(winternitz_address, pq_sig,
                                       target_address, opdata);
+}
+
+bool QuipWallet::executeWithWinternitzValue(
+    const WinternitzAddress &winternitz_address, const Signature &pq_sig,
+    const Address &target_address, const std::vector<uint8_t> &opdata, Amount eth_value) {
+  return impl_->executeWithWinternitzValue(winternitz_address, pq_sig,
+                                           target_address, opdata, eth_value);
 }
 
 bool QuipWallet::changePqOwner(const WinternitzAddress &winternitz_address,

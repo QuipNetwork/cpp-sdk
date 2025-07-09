@@ -21,6 +21,12 @@ public:
                         const Signature &pq_sig, const Address &target_address,
                         const vector<uint8_t> &opdata);
 
+  // Execute a contract call using Winternitz signature with custom ETH value
+  virtual bool
+  executeWithWinternitzValue(const WinternitzAddress &winternitz_address,
+                            const Signature &pq_sig, const Address &target_address,
+                            const vector<uint8_t> &opdata, Amount eth_value);
+
   // Change the PQ owner using Winternitz signature
   virtual bool changePqOwner(const WinternitzAddress &winternitz_address,
                              const Signature &pq_sig);

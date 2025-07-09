@@ -245,8 +245,10 @@ validate_deposit_output() {
 validate_balance() {
     # Read from stdin and check if output contains "Balance:" and a number
     local input=$(cat)
-    echo "$input"
+    echo "$input" >&2
     if echo "$input" | grep -q "Balance:" && echo "$input" | grep -qE "10000000000000000"; then
+        # Output something to indicate success
+        echo "BALANCE_VALID=true"
         return 0
     else
         return 1
@@ -257,8 +259,10 @@ validate_balance() {
 validate_pq_owner() {
     # Read from stdin and check if output contains "PQ Owner:" and a valid address
     local input=$(cat)
-    echo "$input"
+    echo "$input" >&2
     if echo "$input" | grep -q "PQ Owner:" && echo "$input" | grep -q "$FIRST_PQ_PUBKEY"; then
+        # Output something to indicate success
+        echo "PQ_OWNER_VALID=true"
         return 0
     else
         return 1
@@ -293,18 +297,79 @@ validate_recover_keypair_output() {
     fi
 }
 
-# Helper function to validate transfer output
+# Helper function to validate transfer output and extract next PQ owner info
 validate_transfer_output() {
     # Read from stdin and check if transfer was successful
     local input=$(cat)
-    echo "$input"
+    # Show the non-debug lines to stderr for visibility
+    echo "$input" | grep -v "^Debug:" >&2
+    
+    # Extract next PQ owner information for use in Test 9
+    local next_public_seed=$(echo "$input" | grep 'Next PQ Owner Public Seed:' | sed 's/.*: //')
+    local next_public_key_hash=$(echo "$input" | grep 'Next PQ Owner Public Key Hash:' | sed 's/.*: //')
+    local next_private_key=$(echo "$input" | grep 'Next PQ Owner Private Key:' | sed 's/.*: //')
     
     # Check for success indicators
     if echo "$input" | grep -q "Transfer successful!" && \
        echo "$input" | grep -q "From:" && \
        echo "$input" | grep -q "To:" && \
        echo "$input" | grep -q "Amount:" && \
-       echo "$input" | grep -q "Vault ID:"; then
+       echo "$input" | grep -q "Vault ID:" && \
+       [ -n "$next_public_seed" ] && [ -n "$next_public_key_hash" ] && [ -n "$next_private_key" ]; then
+        # Export values for use in Test 9 - only output variable assignments to stdout
+        echo "NEXT_PQ_PUBLIC_SEED=$next_public_seed"
+        echo "NEXT_PQ_PUBLIC_KEY_HASH=$next_public_key_hash"
+        echo "NEXT_PQ_PRIVATE_KEY=$next_private_key"
+        echo "NEXT_PQ_PUBKEY=0x${next_public_seed#0x}${next_public_key_hash#0x}"
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Helper function to validate execute output
+validate_execute_output() {
+    # Read from stdin and check if execution was successful
+    local input=$(cat)
+    # Show the non-debug lines to stderr for visibility
+    echo "$input" | grep -v "^Debug:" >&2
+    
+    # Extract next PQ owner information for use in Test 9
+    local next_public_seed=$(echo "$input" | grep 'Next PQ Owner Public Seed:' | sed 's/.*: //')
+    local next_public_key_hash=$(echo "$input" | grep 'Next PQ Owner Public Key Hash:' | sed 's/.*: //')
+    local next_private_key=$(echo "$input" | grep 'Next PQ Owner Private Key:' | sed 's/.*: //')
+    
+    # Check for success indicators
+    if echo "$input" | grep -q "Execute successful!" && \
+       echo "$input" | grep -q "Wallet:" && \
+       echo "$input" | grep -q "Target:" && \
+       echo "$input" | grep -q "Data:" && \
+       [ -n "$next_public_seed" ] && [ -n "$next_public_key_hash" ] && [ -n "$next_private_key" ]; then
+        # Export values for use in Test 9 - only output variable assignments to stdout
+        echo "NEXT_PQ_PUBLIC_SEED=$next_public_seed"
+        echo "NEXT_PQ_PUBLIC_KEY_HASH=$next_public_key_hash"
+        echo "NEXT_PQ_PRIVATE_KEY=$next_private_key"
+        echo "NEXT_PQ_PUBKEY=0x${next_public_seed#0x}${next_public_key_hash#0x}"
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Helper function to validate change owner output
+validate_change_owner_output() {
+    # Read from stdin and check if change owner was successful
+    local input=$(cat)
+    # Show the non-debug lines to stderr for visibility
+    echo "$input" | grep -v "^Debug:" >&2
+    
+    # Check for success indicators
+    if echo "$input" | grep -q "Change owner successful!" && \
+       echo "$input" | grep -q "Wallet:" && \
+       echo "$input" | grep -q "New PQ Owner Public Seed:" && \
+       echo "$input" | grep -q "New PQ Owner Public Key Hash:"; then
+        # Output something to indicate success
+        echo "CHANGE_OWNER_VALID=true"
         return 0
     else
         return 1
@@ -413,10 +478,25 @@ run_test "Transfer funds using quantum secret and wallet address" \
     "validate_transfer_output"
 
 # Test 8: Execute contract calls using Winternitz signature (matches "Should execute contract calls using Winternitz signature")
-echo -e "${BLUE}=== Test 8: Execute contract calls using Winternitz signature ===${NC}"
+# Use a simple execute call to QuipFactory to test executeWithWinternitz functionality
+# Use quantum secret and wallet from first test for execute functionality
+# Call a simple function - we'll use balance check (balanceOf function signature: 0x70a08231 + address)
+USER_ADDRESS_PADDED=$(echo "$WALLET_ADDRESS" | sed 's/0x/000000000000000000000000/' | tr '[:upper:]' '[:lower:]')
+run_test "Execute contract calls using Winternitz signature" \
+    "quip-cpp-sdk/build/quip-cli --rpc-url \"$RPC_URL\" --contract-address \"$QUIP_FACTORY_ADDRESS\" execute \"$FIRST_QUANTUM_SECRET\" \"$FIRST_WALLET_ADDRESS\" \"$QUIP_FACTORY_ADDRESS\" \"0x70a08231$USER_ADDRESS_PADDED\" \"0.001\"" \
+    0 \
+    "validate_execute_output"
+
+# Extract next PQ owner values for Test 9
+eval "$OUTPUT_VALUES"
 
 # Test 9: Change PQ owner (matches "Should change PQ owner")
-echo -e "${BLUE}=== Test 9: Change PQ owner ===${NC}"
+# Use the private key and public seed from Test 8's output
+# The wallet's PQ owner was changed in Test 8, so we need to use the new private key and public seed
+run_test "Change PQ owner" \
+    "quip-cpp-sdk/build/quip-cli --rpc-url \"$RPC_URL\" --contract-address \"$QUIP_FACTORY_ADDRESS\" change-owner \"$FIRST_QUANTUM_SECRET\" \"$FIRST_WALLET_ADDRESS\" \"$NEXT_PQ_PRIVATE_KEY\" \"$NEXT_PQ_PUBLIC_SEED\"" \
+    0 \
+    "validate_change_owner_output"
 
 # =============================================================================
 # ERROR HANDLING TESTS
@@ -450,7 +530,7 @@ echo -e "${BLUE}Total tests: $((TESTS_PASSED + TESTS_FAILED))${NC}"
 
 # Print comparison with ethereum-sdk tests
 echo ""
-echo -e "${YELLOW}=== COMPARISON WITH ETHEREUM-SDK TESTS ===${NC}"
+echo -e "${YELLOW}=== TEST COVERAGE SUMMARY ===${NC}"
 echo "✓ QuipFactory tests covered:"
 echo "  - Deploy a new quip wallet from non-owner"
 echo "  - Deploy a new quip wallet with initial balance"
@@ -463,7 +543,6 @@ echo ""
 
 if [ $TESTS_FAILED -eq 0 ]; then
     echo -e "${GREEN}All tests passed! 🎉${NC}"
-    echo -e "${GREEN}CLI tool successfully matches ethereum-sdk functionality!${NC}"
     exit 0
 else
     echo -e "${RED}Some tests failed! ❌${NC}"

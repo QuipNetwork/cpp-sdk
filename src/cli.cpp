@@ -146,13 +146,6 @@ public:
     std::array<uint8_t, 32> private_seed_array = keccak256(concat);
     std::vector<uint8_t> private_seed(private_seed_array.begin(), private_seed_array.end());
     
-    // Debug output
-    std::cerr << "Debug: concat = 0x";
-    for (const auto& byte : concat) {
-        std::cerr << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte);
-    }
-    std::cerr << std::endl;
-    std::cerr << "Debug: private_seed = 0x" << toHex(private_seed_array) << std::endl;
 
     // Generate keypair using the two-parameter interface (protocol-compatible)
     auto [public_key, private_key] =
@@ -205,7 +198,7 @@ bool CLI::execute(const std::vector<std::string> &args) {
     return handleSign(command_args);
   } else if (command == "pq-owner") {
     return handleGetPqOwner(command_args);
-  } else if (command == "change-pq-owner") {
+  } else if (command == "change-pq-owner" || command == "change-owner") {
     return handleChangePqOwner(command_args);
   } else if (command == "balance") {
     return handleGetBalance(command_args);
@@ -461,6 +454,14 @@ bool CLI::handleTransfer(const std::vector<std::string> &args) {
       std::cout << "  To: " << to_address << std::endl;
       std::cout << "  Amount: " << amount_str << " wei" << std::endl;
       std::cout << "  Vault ID: " << toHex(vault_id) << std::endl;
+      std::cout << "  Next PQ Owner Public Seed: " << toHex(next_pq_address.publicSeed) << std::endl;
+      std::cout << "  Next PQ Owner Public Key Hash: " << toHex(next_pq_address.publicKeyHash) << std::endl;
+      // Flatten the private key vector to hex for output
+      std::vector<uint8_t> next_privkey_bytes;
+      for (const auto &seg : next_private_key) {
+        next_privkey_bytes.insert(next_privkey_bytes.end(), seg.begin(), seg.end());
+      }
+      std::cout << "  Next PQ Owner Private Key: " << toHex(next_privkey_bytes) << std::endl;
       return true;
     } else {
       std::cerr << "Error: Transfer failed" << std::endl;
@@ -474,69 +475,157 @@ bool CLI::handleTransfer(const std::vector<std::string> &args) {
 }
 
 bool CLI::handleExecute(const std::vector<std::string> &args) {
-  if (args.size() != 6) {
-    std::cerr
-        << "Usage: execute <vault_id> <classical_pubkey> <winternitz_address> "
-           "<pq_sig> <target_address> <opdata>"
-        << std::endl;
-    std::cerr << "  vault_id: 32-byte vault identifier in hex format (0x...)"
+  if (args.size() != 5) {
+    std::cerr << "Usage: execute <quantum_secret_hex> <quip_wallet_address> "
+                 "<target_address> <opdata> <eth_value>"
               << std::endl;
-    std::cerr << "  classical_pubkey: Classical public key address (0x...)"
+    std::cerr << "  quantum_secret_hex: 32-byte quantum secret in hex format (0x...)"
               << std::endl;
-    std::cerr << "  winternitz_address: 64-byte Winternitz address in hex "
-                 "format (0x...)"
-              << std::endl;
-    std::cerr << "  pq_sig: Winternitz signature in hex format (0x...)"
+    std::cerr << "  quip_wallet_address: QuipWallet address (0x...)"
               << std::endl;
     std::cerr << "  target_address: Target contract address (0x...)"
               << std::endl;
-    std::cerr << "  opdata: Operation data in hex format (0x...)" << std::endl;
+    std::cerr << "  opdata: Operation data in hex format (0x...)"
+              << std::endl;
+    std::cerr << "  eth_value: ETH value to send with call (in ETH, e.g. 0.01)"
+              << std::endl;
     return false;
   }
 
   try {
-    // Parse arguments
-    VaultId vaultId = fromHex32(args[0]);
-    Address classical_pubkey = parseAddress(args[1]);
-    WinternitzAddress winternitz_address =
-        parseWinternitzAddressFromHex(args[2]);
-    Signature pq_sig = parseSignatureFromHex(args[3]);
-    Address target_address = parseAddress(args[4]);
-    std::vector<uint8_t> opdata = parseOpData(args[5]);
+    // 1. Parse Arguments
+    std::string quantum_secret_hex = args[0];
+    if (quantum_secret_hex.front() == '"' && quantum_secret_hex.back() == '"') {
+      quantum_secret_hex =
+          quantum_secret_hex.substr(1, quantum_secret_hex.size() - 2);
+    }
+    std::array<uint8_t, 32> quantum_secret = fromHex32(quantum_secret_hex);
 
-    // Get private key from environment variable
-    // const char *env_private_key = std::getenv("PRIVATE_KEY"); // No longer
-    // needed here
-    // ...
-    // PrivateKey private_key = env_private_key;
+    std::string quip_wallet_address_str = args[1];
+    if (quip_wallet_address_str.front() == '"' &&
+        quip_wallet_address_str.back() == '"') {
+      quip_wallet_address_str =
+          quip_wallet_address_str.substr(1, quip_wallet_address_str.size() - 2);
+    }
+    quip_wallet_address_str = toChecksumAddress(quip_wallet_address_str);
+    Address quip_wallet_address = parseAddress(quip_wallet_address_str);
 
-    // Get wallet address from factory using vaultId and classical public key
-    Address wallet_address =
-        factory_->getQuipWalletAddress(vaultId, classical_pubkey);
+    std::string target_address_str = args[2];
+    if (target_address_str.front() == '"' && target_address_str.back() == '"') {
+      target_address_str = target_address_str.substr(1, target_address_str.size() - 2);
+    }
+    target_address_str = toChecksumAddress(target_address_str);
+    Address target_address = parseAddress(target_address_str);
 
-    if (wallet_address.empty() ||
-        wallet_address == "0x0000000000000000000000000000000000000000") {
-      std::cerr << "Error: No wallet found for vault ID " << toHex(vaultId)
-                << " and classical public key " << classical_pubkey
-                << std::endl;
-      return false;
+    std::string opdata_str = args[3];
+    if (opdata_str.front() == '"' && opdata_str.back() == '"') {
+      opdata_str = opdata_str.substr(1, opdata_str.size() - 2);
+    }
+    std::vector<uint8_t> opdata = parseOpData(opdata_str);
+
+    std::string eth_value_str = args[4];
+    if (eth_value_str.front() == '"' && eth_value_str.back() == '"') {
+      eth_value_str = eth_value_str.substr(1, eth_value_str.size() - 2);
+    }
+    // Convert ETH to wei (multiply by 10^18)
+    double eth_value = std::stod(eth_value_str);
+    Amount wei_value = static_cast<Amount>(eth_value * 1e18);
+
+    // 2. Find the correct Vault
+    std::string private_key_env =
+        getenv("PRIVATE_KEY") ? getenv("PRIVATE_KEY") : "";
+    if (private_key_env.empty()) {
+      throw std::runtime_error("PRIVATE_KEY environment variable not set");
+    }
+    Address classical_pubkey = deriveClassicalPublicKey(private_key_env);
+    classical_pubkey = toChecksumAddress(classical_pubkey);
+
+    auto vaults = factory_->getVaults(classical_pubkey);
+    
+    auto it =
+        std::find_if(vaults.begin(), vaults.end(), [&](const auto &vault) {
+          return toChecksumAddress(vault.classical_address) == toChecksumAddress(quip_wallet_address);
+        });
+
+    if (it == vaults.end()) {
+      throw std::runtime_error(
+          "Could not find a vault for the given wallet address.");
+    }
+    VaultId vault_id = it->id;
+
+    // 3. Get current on-chain public key
+    auto wallet = std::make_unique<QuipWallet>(rpc_url_, quip_wallet_address);
+    std::string current_pq_owner_hex = wallet->getPqOwner();
+    WinternitzAddress current_pq_address =
+        parseWinternitzAddressFromHex(current_pq_owner_hex);
+    std::array<uint8_t, 32> public_seed = current_pq_address.publicSeed;
+
+    // 4. Initialize signer and handle keys
+    QuipSigner signer(quantum_secret);
+    auto [recovered_address, current_private_key] =
+        signer.recoverKeyPair(vault_id, public_seed);
+    auto [next_pq_address, next_private_key] = signer.generateKeyPair(vault_id);
+
+    // 5. Pack and hash message data for execute
+    std::string command =
+        "cd " + std::string(getenv("PWD") ? getenv("PWD") : ".") +
+        "/ethereum-sdk && node -e "
+        "\"console.log(require('ethers').solidityPacked(['bytes32', "
+        "'bytes32', 'bytes32', 'bytes32', 'address', 'bytes'], ['" +
+        toHex(current_pq_address.publicSeed) + "', '" +
+        toHex(current_pq_address.publicKeyHash) + "', '" +
+        toHex(next_pq_address.publicSeed) + "', '" +
+        toHex(next_pq_address.publicKeyHash) + "', '" + target_address_str +
+        "', '" + toHex(opdata) + "']))\""; 
+
+    FILE *pipe = popen(command.c_str(), "r");
+    if (!pipe) {
+      throw std::runtime_error("Failed to execute solidityPacked script");
+    }
+    std::string packed_data;
+    char buffer[128];
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+      packed_data += buffer;
+    }
+    pclose(pipe);
+    if (!packed_data.empty() && packed_data.back() == '\n') {
+      packed_data.pop_back();
     }
 
-    // Create wallet instance and perform execute
-    auto wallet = createWallet(wallet_address);
-    bool success = wallet->executeWithWinternitz(winternitz_address, pq_sig,
-                                                 target_address, opdata);
+    if (packed_data.empty() || packed_data.rfind("0x", 0) != 0) {
+      throw std::runtime_error(
+          "Failed to get packed data from ethers.js script. Output was: " +
+          packed_data);
+    }
 
-    if (success) {
+    std::vector<uint8_t> message_data = fromHex(packed_data.substr(2));
+    std::array<uint8_t, 32> message_hash = keccak256(message_data);
+
+    // 6. Sign
+    Signature pq_sig =
+        signer.sign(message_hash, current_private_key, public_seed);
+
+    // 7. Execute with the required ETH value
+    if (wallet->executeWithWinternitzValue(next_pq_address, pq_sig, target_address,
+                                           opdata, wei_value)) {
       std::cout << "Execute successful!" << std::endl;
-      std::cout << "Wallet: " << wallet_address << std::endl;
+      std::cout << "Wallet: " << quip_wallet_address << std::endl;
       std::cout << "Target: " << target_address << std::endl;
       std::cout << "Data: " << toHex(opdata) << std::endl;
+      std::cout << "Next PQ Owner Public Seed: " << toHex(next_pq_address.publicSeed) << std::endl;
+      std::cout << "Next PQ Owner Public Key Hash: " << toHex(next_pq_address.publicKeyHash) << std::endl;
+      // Flatten the private key vector to hex for output
+      std::vector<uint8_t> next_privkey_bytes;
+      for (const auto &seg : next_private_key) {
+        next_privkey_bytes.insert(next_privkey_bytes.end(), seg.begin(), seg.end());
+      }
+      std::cout << "Next PQ Owner Private Key: " << toHex(next_privkey_bytes) << std::endl;
       return true;
     } else {
       std::cerr << "Error: Execute failed" << std::endl;
       return false;
     }
+
   } catch (const std::exception &e) {
     std::cerr << "Error: " << e.what() << std::endl;
     return false;
@@ -544,64 +633,212 @@ bool CLI::handleExecute(const std::vector<std::string> &args) {
 }
 
 bool CLI::handleChangePqOwner(const std::vector<std::string> &args) {
-  if (args.size() != 4) {
-    std::cerr << "Usage: change-owner <vault_id> <classical_pubkey> "
-                 "<winternitz_address> <pq_sig>"
+  if (args.size() != 2 && args.size() != 3 && args.size() != 4) {
+    std::cerr << "Usage: change-owner <quantum_secret_hex> <quip_wallet_address> [private_key_hex] [public_seed_hex]"
               << std::endl;
-    std::cerr << "  vault_id: 32-byte vault identifier in hex format (0x...)"
+    std::cerr << "  quantum_secret_hex: 32-byte quantum secret in hex format (0x...)"
               << std::endl;
-    std::cerr << "  classical_pubkey: Classical public key address (0x...)"
+    std::cerr << "  quip_wallet_address: QuipWallet address (0x...)"
               << std::endl;
-    std::cerr << "  winternitz_address: 64-byte Winternitz address in hex "
-                 "format (0x...)"
+    std::cerr << "  private_key_hex: Optional private key in hex format (0x...)"
               << std::endl;
-    std::cerr << "  pq_sig: Winternitz signature in hex format (0x...)"
+    std::cerr << "  public_seed_hex: Optional 32-byte public seed in hex format (0x...) - required if private_key_hex is provided"
               << std::endl;
     return false;
   }
 
   try {
-    // Parse arguments
-    VaultId vaultId = fromHex32(args[0]);
-    Address classical_pubkey = parseAddress(args[1]);
-    WinternitzAddress winternitz_address =
-        parseWinternitzAddressFromHex(args[2]);
-    Signature pq_sig = parseSignatureFromHex(args[3]);
+    // 1. Parse Arguments
+    std::string quantum_secret_hex = args[0];
+    if (quantum_secret_hex.front() == '"' && quantum_secret_hex.back() == '"') {
+      quantum_secret_hex =
+          quantum_secret_hex.substr(1, quantum_secret_hex.size() - 2);
+    }
+    std::array<uint8_t, 32> quantum_secret = fromHex32(quantum_secret_hex);
 
-    // Get private key from environment variable
-    // const char *env_private_key = std::getenv("PRIVATE_KEY"); // No longer
-    // needed here
-    // ...
-    // PrivateKey private_key = env_private_key;
+    std::string quip_wallet_address_str = args[1];
+    if (quip_wallet_address_str.front() == '"' &&
+        quip_wallet_address_str.back() == '"') {
+      quip_wallet_address_str =
+          quip_wallet_address_str.substr(1, quip_wallet_address_str.size() - 2);
+    }
+    quip_wallet_address_str = toChecksumAddress(quip_wallet_address_str);
+    Address quip_wallet_address = parseAddress(quip_wallet_address_str);
 
-    // Get wallet address from factory using vaultId and classical public key
-    Address wallet_address =
-        factory_->getQuipWalletAddress(vaultId, classical_pubkey);
+    // 2. Find the correct Vault
+    std::string private_key_env =
+        getenv("PRIVATE_KEY") ? getenv("PRIVATE_KEY") : "";
+    if (private_key_env.empty()) {
+      throw std::runtime_error("PRIVATE_KEY environment variable not set");
+    }
+    Address classical_pubkey = deriveClassicalPublicKey(private_key_env);
+    classical_pubkey = toChecksumAddress(classical_pubkey);
 
-    if (wallet_address.empty() ||
-        wallet_address == "0x0000000000000000000000000000000000000000") {
-      std::cerr << "Error: No wallet found for vault ID " << toHex(vaultId)
-                << " and classical public key " << classical_pubkey
-                << std::endl;
-      return false;
+    auto vaults = factory_->getVaults(classical_pubkey);
+    
+    auto it =
+        std::find_if(vaults.begin(), vaults.end(), [&](const auto &vault) {
+          return toChecksumAddress(vault.classical_address) == toChecksumAddress(quip_wallet_address);
+        });
+
+    if (it == vaults.end()) {
+      throw std::runtime_error(
+          "Could not find a vault for the given wallet address.");
+    }
+    VaultId vault_id = it->id;
+
+    // 3. Get current on-chain public key
+    auto wallet = std::make_unique<QuipWallet>(rpc_url_, quip_wallet_address);
+    std::string current_pq_owner_hex = wallet->getPqOwner();
+    WinternitzAddress current_pq_address =
+        parseWinternitzAddressFromHex(current_pq_owner_hex);
+    std::array<uint8_t, 32> public_seed = current_pq_address.publicSeed;
+
+    // 4. Initialize signer and handle keys
+    QuipSigner signer(quantum_secret);
+    std::vector<std::array<uint8_t, 32>> current_private_key;
+    
+    // Check if private key (and optionally public seed) was provided directly
+    if (args.size() >= 3) {
+      // Use provided private key (need to convert from flat hex to vector of arrays)
+      std::string private_key_hex = args[2];
+      if (private_key_hex.front() == '"' && private_key_hex.back() == '"') {
+        private_key_hex = private_key_hex.substr(1, private_key_hex.size() - 2);
+      }
+      std::vector<uint8_t> privkey_bytes = fromHex(private_key_hex);
+      // Convert flat bytes to vector of 32-byte arrays
+      if (privkey_bytes.size() % 32 != 0) {
+        throw std::runtime_error("Invalid private key length");
+      }
+      current_private_key.resize(privkey_bytes.size() / 32);
+      for (size_t i = 0; i < current_private_key.size(); ++i) {
+        std::copy_n(privkey_bytes.begin() + i * 32, 32, current_private_key[i].begin());
+      }
+      
+      // If public seed was also provided, use it and derive the corresponding public key
+      if (args.size() == 4) {
+        std::string public_seed_hex = args[3];
+        if (public_seed_hex.front() == '"' && public_seed_hex.back() == '"') {
+          public_seed_hex = public_seed_hex.substr(1, public_seed_hex.size() - 2);
+        }
+        std::vector<uint8_t> seed_bytes = fromHex(public_seed_hex);
+        if (seed_bytes.size() != 32) {
+          throw std::runtime_error("Invalid public seed length - must be 32 bytes");
+        }
+        std::copy(seed_bytes.begin(), seed_bytes.end(), public_seed.begin());
+        
+        // Derive the public key from the private key and public seed to update current_pq_address
+        // We need to recompute the public key segments from the private key segments
+        // The proper way is to generate the public key using the same process as generate_key_pair
+        // but we already have the private key segments, so we just need the chain operation
+        
+        // Generate randomization elements - need more than NUM_SIGNATURE_CHUNKS for chain function
+        std::vector<std::array<uint8_t, 32>> randomization_elements;
+        // Need at least NUM_SIGNATURE_CHUNKS + CHAIN_LEN elements
+        for (size_t i = 0; i < 67 + 16; ++i) {
+          // PRF implementation matching hashsigs-cpp
+          std::vector<uint8_t> prf_input;
+          prf_input.push_back(0x03);  // Domain separator
+          prf_input.insert(prf_input.end(), public_seed.begin(), public_seed.end());
+          prf_input.push_back(static_cast<uint8_t>(i >> 8));
+          prf_input.push_back(static_cast<uint8_t>(i & 0xFF));
+          randomization_elements.push_back(keccak256(prf_input));
+        }
+        
+        // Compute public key segments using the chain function
+        std::vector<std::array<uint8_t, 32>> public_key_segments;
+        
+        for (size_t i = 0; i < current_private_key.size(); ++i) {
+          auto chain_out = current_private_key[i];
+          
+          // Apply chain function with index 0 and steps = CHAIN_LEN - 1 = 15
+          for (uint16_t j = 1; j <= 15; ++j) {
+            // XOR with randomization element at index j (since starting index is 0)
+            std::array<uint8_t, 32> xored;
+            for (size_t k = 0; k < 32; ++k) {
+              xored[k] = chain_out[k] ^ randomization_elements[j][k];
+            }
+            // Hash
+            std::vector<uint8_t> xored_vec(xored.begin(), xored.end());
+            chain_out = keccak256(xored_vec);
+          }
+          
+          public_key_segments.push_back(chain_out);
+        }
+        
+        // Concatenate and hash the public key segments to get the public key hash
+        std::vector<uint8_t> segments_concatenated;
+        for (const auto &segment : public_key_segments) {
+          segments_concatenated.insert(segments_concatenated.end(), segment.begin(), segment.end());
+        }
+        auto public_key_hash = keccak256(segments_concatenated);
+        
+        
+        // Update current_pq_address with the derived values
+        current_pq_address.publicSeed = public_seed;
+        current_pq_address.publicKeyHash = public_key_hash;
+      }
+    } else {
+      // Recover private key from quantum secret
+      auto [recovered_address, recovered_private_key] =
+          signer.recoverKeyPair(vault_id, public_seed);
+      current_private_key = recovered_private_key;
+    }
+    
+    auto [next_pq_address, next_private_key] = signer.generateKeyPair(vault_id);
+
+    // 5. Pack and hash message data for changePqOwner
+    std::string command =
+        "cd " + std::string(getenv("PWD") ? getenv("PWD") : ".") +
+        "/ethereum-sdk && node -e "
+        "\"console.log(require('ethers').solidityPacked(['bytes32', "
+        "'bytes32', 'bytes32', 'bytes32'], ['" +
+        toHex(current_pq_address.publicSeed) + "', '" +
+        toHex(current_pq_address.publicKeyHash) + "', '" +
+        toHex(next_pq_address.publicSeed) + "', '" +
+        toHex(next_pq_address.publicKeyHash) + "']))\""; 
+
+    FILE *pipe = popen(command.c_str(), "r");
+    if (!pipe) {
+      throw std::runtime_error("Failed to execute solidityPacked script");
+    }
+    std::string packed_data;
+    char buffer[128];
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+      packed_data += buffer;
+    }
+    pclose(pipe);
+    if (!packed_data.empty() && packed_data.back() == '\n') {
+      packed_data.pop_back();
     }
 
-    // Create wallet instance and perform change owner
-    auto wallet = createWallet(wallet_address);
-    bool success = wallet->changePqOwner(winternitz_address, pq_sig);
+    if (packed_data.empty() || packed_data.rfind("0x", 0) != 0) {
+      throw std::runtime_error(
+          "Failed to get packed data from ethers.js script. Output was: " +
+          packed_data);
+    }
 
-    if (success) {
+    std::vector<uint8_t> message_data = fromHex(packed_data.substr(2));
+    std::array<uint8_t, 32> message_hash = keccak256(message_data);
+
+    // 6. Sign
+    Signature pq_sig =
+        signer.sign(message_hash, current_private_key, public_seed);
+
+    // 7. Execute changePqOwner
+    if (wallet->changePqOwner(next_pq_address, pq_sig)) {
       std::cout << "Change owner successful!" << std::endl;
-      std::cout << "Wallet: " << wallet_address << std::endl;
+      std::cout << "Wallet: " << quip_wallet_address << std::endl;
       std::cout << "New PQ Owner Public Seed: "
-                << toHex(winternitz_address.publicSeed) << std::endl;
+                << toHex(next_pq_address.publicSeed) << std::endl;
       std::cout << "New PQ Owner Public Key Hash: "
-                << toHex(winternitz_address.publicKeyHash) << std::endl;
+                << toHex(next_pq_address.publicKeyHash) << std::endl;
       return true;
     } else {
       std::cerr << "Error: Change owner failed" << std::endl;
       return false;
     }
+
   } catch (const std::exception &e) {
     std::cerr << "Error: " << e.what() << std::endl;
     return false;
@@ -792,13 +1029,12 @@ void CLI::printUsage() const {
   std::cout << "  transfer <quantum_secret> <quip_wallet_address> <to_address> "
                "<amount>"
             << std::endl;
-  std::cout << "  execute <vault_id> <classical_pubkey> <winternitz_address> "
-               "<pq_sig> <target_address> <opdata>"
+  std::cout << "  execute <quantum_secret> <quip_wallet_address> <target_address> "
+               "<opdata> <eth_value>"
             << std::endl;
   std::cout << "  balance <address>" << std::endl;
   std::cout << "  pq-owner <address>" << std::endl;
-  std::cout << "  change-owner <vault_id> <classical_pubkey> "
-               "<winternitz_address> <pq_sig>"
+  std::cout << "  change-owner <quantum_secret> <quip_wallet_address>"
             << std::endl;
   std::cout << "  generate-keypair <quantum_secret> <vault_id>" << std::endl;
   std::cout << "  recover-keypair <quantum_secret_hex> <vault_id_hex> "
