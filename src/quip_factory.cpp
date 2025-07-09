@@ -146,7 +146,7 @@ public:
                          {"maxFeePerGas", max_fee_hex},
                          {"maxPriorityFeePerGas", max_priority_hex},
                          {"nonce", nonce_hex_str},
-                         {"chainId", 31337}};
+                         {"chainId", getChainId()}};
 
     // Send transaction using the TypeScript script
     std::string tx_json = tx.dump();
@@ -273,6 +273,14 @@ public:
     }
     return 0;
   }
+  
+  // Get chain ID from the RPC provider (cached)
+  uint64_t getChainId() const {
+    if (chain_id_ == 0) {
+      chain_id_ = quip::getChainId(rpc_url_);
+    }
+    return chain_id_;
+  }
 
   std::vector<Vault> getVaults(const Address &owner) {
     Address checksummed_owner = quip::toChecksumAddress(owner);
@@ -342,7 +350,7 @@ private:
   static int getNextRequestId() { return request_id_counter_++; }
 
   nlohmann::json sendJsonRpc(const std::string &method,
-                             const nlohmann::json &params) {
+                             const nlohmann::json &params) const {
     CURL *curl;
     CURLcode res;
     std::string readBuffer;
@@ -419,6 +427,7 @@ private:
   std::string rpc_url_;
   std::string contract_address_;
   static int request_id_counter_;
+  mutable uint64_t chain_id_ = 0; // Cached chain ID
 };
 
 int QuipFactory::Impl::request_id_counter_ = 0;

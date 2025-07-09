@@ -132,7 +132,7 @@ public:
                            {"maxFeePerGas", max_fee_hex},
                            {"maxPriorityFeePerGas", max_priority_hex},
                            {"nonce", nonce_hex_str},
-                           {"chainId", 31337}};
+                           {"chainId", getChainId()}};
 
       // Send transaction using the TypeScript script
       std::string tx_json = tx.dump();
@@ -321,7 +321,7 @@ public:
                            {"maxFeePerGas", max_fee_hex},
                            {"maxPriorityFeePerGas", max_priority_hex},
                            {"nonce", nonce_hex_str},
-                           {"chainId", 31337}};
+                           {"chainId", getChainId()}};
 
       // Send transaction using the TypeScript script
       std::string tx_json = tx.dump();
@@ -488,7 +488,7 @@ public:
                            {"maxFeePerGas", max_fee_hex},
                            {"maxPriorityFeePerGas", max_priority_hex},
                            {"nonce", nonce_hex_str},
-                           {"chainId", 31337}};
+                           {"chainId", getChainId()}};
 
       // Send transaction using the TypeScript script
       std::string tx_json = tx.dump();
@@ -686,6 +686,14 @@ public:
   std::string getRecipientAddress() const {
     return "0x742d35cc6634c0532925a3b8d4c9db96c4b4d8b6";
   }
+  
+  // Get chain ID from the RPC provider (cached)
+  uint64_t getChainId() const {
+    if (chain_id_ == 0) {
+      chain_id_ = quip::getChainId(rpc_url_);
+    }
+    return chain_id_;
+  }
 
 private:
   static size_t WriteCallback(void *contents, size_t size, size_t nmemb,
@@ -695,7 +703,7 @@ private:
   }
 
   nlohmann::json sendJsonRpc(const std::string &method,
-                             const nlohmann::json &params) {
+                             const nlohmann::json &params) const {
     CURL *curl = curl_easy_init();
     if (!curl) {
       throw std::runtime_error("Failed to initialize CURL");
@@ -731,6 +739,7 @@ private:
 
   std::string rpc_url_;
   std::string contract_address_;
+  mutable uint64_t chain_id_ = 0; // Cached chain ID
 };
 
 QuipWallet::QuipWallet(const std::string &rpc_url,

@@ -127,6 +127,9 @@ inline VaultId generateVaultId(const string &entropy = "") {
 string abiEncode(const string &function_name, const string &abi_json,
                  const string &params_json);
 
+// Get chain ID from RPC endpoint
+uint64_t getChainId(const string &rpc_url);
+
 inline string toHex(const Signature &sig) {
   // Flatten the signature (vector<array<uint8_t, 32>>) into a single
   // vector<uint8_t>
