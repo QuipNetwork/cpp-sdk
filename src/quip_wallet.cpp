@@ -41,12 +41,17 @@ public:
           {"publicSeed", toHex(winternitz_address.publicSeed)},
           {"publicKeyHash", toHex(winternitz_address.publicKeyHash)}};
 
-      // Convert signature elements to hex strings
+      // Convert signature elements to hex strings array (ABI expects bytes32[67])
       nlohmann::json elements = nlohmann::json::array();
       for (const auto &element : pq_sig) {
         elements.push_back(toHex(element));
       }
       nlohmann::json pqSig = {{"elements", elements}};
+      
+      // Debug: Check signature length
+      if (elements.size() != 67) {
+        std::cerr << "Warning: Signature length is " << elements.size() << ", expected 67" << std::endl;
+      }
 
       // Create parameters for ABI encoding
       nlohmann::json params = {nextPqOwner, pqSig, to_address,
@@ -118,6 +123,7 @@ public:
       nonce_ss << "0x" << std::hex << nonce;
       std::string nonce_hex_str = nonce_ss.str();
 
+      // The value of the transaction should be the transfer fee.
       std::stringstream value_ss;
       value_ss << "0x" << std::hex << transferFee;
       std::string value_hex = value_ss.str();
@@ -221,7 +227,7 @@ public:
           {"publicSeed", toHex(winternitz_address.publicSeed)},
           {"publicKeyHash", toHex(winternitz_address.publicKeyHash)}};
 
-      // Convert signature elements to hex strings
+      // Convert signature elements to hex strings array (ABI expects bytes32[67])
       nlohmann::json elements = nlohmann::json::array();
       for (const auto &element : pq_sig) {
         elements.push_back(toHex(element));
@@ -401,7 +407,7 @@ public:
           {"publicSeed", toHex(winternitz_address.publicSeed)},
           {"publicKeyHash", toHex(winternitz_address.publicKeyHash)}};
 
-      // Convert signature elements to hex strings
+      // Convert signature elements to hex strings array (ABI expects bytes32[67])
       nlohmann::json elements = nlohmann::json::array();
       for (const auto &element : pq_sig) {
         elements.push_back(toHex(element));

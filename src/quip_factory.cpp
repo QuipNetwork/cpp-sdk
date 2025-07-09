@@ -1,5 +1,5 @@
 #include "quip_factory.hpp"
-#include "common.hpp"
+#include "../include/common.hpp"
 #include <algorithm>
 #include <chrono>
 #include <curl/curl.h>
@@ -204,8 +204,9 @@ public:
   }
 
   Address getQuipWalletAddress(const VaultId &vaultId, const Address &to) {
+    Address checksummed_to = quip::toChecksumAddress(to);
     // Encode the function call using the ABI encoding script
-    nlohmann::json params = {to, toHex(vaultId)};
+    nlohmann::json params = {checksummed_to, toHex(vaultId)};
     std::string params_json = params.dump();
     std::string data = abiEncode("quips", abi_json, params_json);
 
@@ -274,18 +275,20 @@ public:
   }
 
   std::vector<Vault> getVaults(const Address &owner) {
+    Address checksummed_owner = quip::toChecksumAddress(owner);
     std::vector<Vault> vaults;
     uint32_t index = 0;
     while (true) {
       try {
-        VaultId vault_id = getVaultId(owner, index);
+        VaultId vault_id = getVaultId(checksummed_owner, index);
         // The contract returns 0x0...0 if the index is out of bounds.
         if (std::all_of(vault_id.begin(), vault_id.end(),
                         [](uint8_t i) { return i == 0; })) {
           break;
         }
 
-        Address wallet_address = getQuipWalletAddress(vault_id, owner);
+        Address wallet_address =
+            getQuipWalletAddress(vault_id, checksummed_owner);
         if (wallet_address != "0x0000000000000000000000000000000000000000") {
           Vault v;
           v.id = vault_id;
@@ -304,8 +307,9 @@ public:
 
 private:
   VaultId getVaultId(const Address &owner, uint32_t index) {
+    Address checksummed_owner = quip::toChecksumAddress(owner);
     // Encode the function call using the ABI encoding script
-    nlohmann::json params = {owner, index};
+    nlohmann::json params = {checksummed_owner, index};
     std::string params_json = params.dump();
     std::string data = abiEncode("vaultIds", abi_json, params_json);
 
